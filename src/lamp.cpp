@@ -37,6 +37,7 @@ JeeUI2 lib used under MIT License Copyright (c) 2019 Marsel Akhkamov
 
 #include "main.h"
 #include "effectmath.h"
+#include "fontHEX.h"
 
 extern LAMP myLamp; // Объект лампы
 
@@ -155,7 +156,7 @@ void LAMP::handle()
   }
 
   newYearMessageHandle();
-  ConfigSaveCheck(); // для взведенного таймера автосохранения настроек
+  //ConfigSaveCheck(); // для взведенного таймера автосохранения настроек
 
 #ifdef OTA
   otaManager.HandleOtaUpdate();                       // ожидание и обработка команды на обновление прошивки по воздуху
@@ -381,7 +382,8 @@ void LAMP::frameShow(const uint32_t ticktime){
     }
 #endif
 
-LAMP::LAMP() : docArrMessages(512), tmConfigSaveTime(0), tmStringStepTime(DEFAULT_TEXT_SPEED), tmNewYearMessage(0), _fadeTicker(), _reservedTicker()
+//LAMP::LAMP() : docArrMessages(512), tmConfigSaveTime(0), tmStringStepTime(DEFAULT_TEXT_SPEED), tmNewYearMessage(0), _fadeTicker(), _reservedTicker()
+LAMP::LAMP() : docArrMessages(512), tmStringStepTime(DEFAULT_TEXT_SPEED), _fadeTicker(), _reservedTicker()
 #ifdef OTA
     , otaManager((void (*)(CRGB, uint32_t, uint16_t))(&showWarning))
 #endif
@@ -933,7 +935,7 @@ void LAMP::newYearMessageHandle()
   }
 }
 
-
+// при вызове - вывозит на лампу текущее время
 void LAMP::periodicTimeHandle(bool force)
 {
   const tm* t = localtime(embui.timeProcessor.now());

@@ -115,9 +115,10 @@ void setup() {
 
     embui.setPubInterval(60);   // change periodic WebUI publish interval to 60 sec
 
-    // periodic MQTT publish
-    Task *t = new Task(myLamp.getmqtt_int() * TASK_SECOND, TASK_FOREVER, [](){ sendData(); }, &ts, false);
-    t->enableDelayed();
+  // periodic MQTT publish
+  Task *t = new Task(myLamp.getmqtt_int() * TASK_SECOND, TASK_FOREVER, [](){ sendData(); }, &ts, false);
+  t->enableDelayed();
+
 #ifdef TM1637
   tm_setup();
 #endif 

@@ -179,7 +179,7 @@ private:
 
     DynamicJsonDocument docArrMessages; // массив сообщений для вывода на лампу
 
-    timerMinim tmConfigSaveTime;    // таймер для автосохранения
+//    timerMinim tmConfigSaveTime;    // таймер для автосохранения
     timerMinim tmStringStepTime;    // шаг смещения строки, в мс
     timerMinim tmNewYearMessage;    // период вывода новогоднего сообщения
 
@@ -208,7 +208,7 @@ private:
     byte gauge_hue = 0;
     void GaugeMix();
 #endif
-    void ConfigSaveCheck(){ if(tmConfigSaveTime.isReady()) { if(effects.autoSaveConfig()) tmConfigSaveTime.setInterval(0); } }
+    //void ConfigSaveCheck(){ if(tmConfigSaveTime.isReady()) { if(effects.autoSaveConfig()) tmConfigSaveTime.setInterval(0); } }
 
 #ifdef OTA
     OtaManager otaManager;
@@ -307,7 +307,7 @@ public:
 
     void handle();          // главная функция обработки эффектов
 
-    void DelayedAutoEffectConfigSave(int in){ tmConfigSaveTime.setInterval(in); tmConfigSaveTime.reset(); effects.autoSaveConfig(false,true); }
+//    void DelayedAutoEffectConfigSave(int in){ tmConfigSaveTime.setInterval(in); tmConfigSaveTime.reset(); effects.autoSaveConfig(false,true); }
     void setFaderFlag(bool flag) {flags.isFaderON = flag;}
     bool getFaderFlag() {return flags.isFaderON;}
     void setClearingFlag(bool flag) {flags.isEffClearing = flag;}

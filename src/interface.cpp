@@ -73,10 +73,10 @@ bool check_recovery_state(bool isSet){
 
 void resetAutoTimers(bool isEffects=false) // сброс таймера демо и настройка автосохранений
 {
-    embui.autoSaveReset(); // автосохранение конфига будет отсчитываться от этого момента
+    //embui.autoSave();     // автосохранение конфига управляется из самого фреймворка
     myLamp.demoTimer(T_RESET);
     if(isEffects)
-        myLamp.DelayedAutoEffectConfigSave(CFG_AUTOSAVE_TIMEOUT); // настройка отложенной записи эффектов
+        myLamp.effects.autoSaveConfig();
 }
 
 #ifdef AUX_PIN
@@ -570,7 +570,7 @@ void set_effects_list(Interface *interf, JsonObject *data){
         if(myLamp.getMode()==LAMPMODE::MODE_NORMAL)
             embui.var(FPSTR(TCONST_0016), (*data)[FPSTR(TCONST_0016)]);
         resetAutoTimers();
-        myLamp.DelayedAutoEffectConfigSave(0);
+        myLamp.effects.autoSaveConfig();    // DelayedAutoEffectConfigSave(0);
     }
 
     show_effects_param(interf, data);
@@ -2448,7 +2448,8 @@ void sync_parameters(){
 #endif
 
     CALL_SETTER(String(FPSTR(TCONST_0015)) + "0", myLamp.getLampBrightness(), set_effects_dynCtrl);
-    myLamp.DelayedAutoEffectConfigSave(0);
+    //myLamp.DelayedAutoEffectConfigSave(0);
+    myLamp.effects.autoSaveConfig();
 
 #ifdef MP3PLAYER
     //obj[FPSTR(TCONST_00A2)] = embui.param(FPSTR(TCONST_00A2));  // пишет в плеер!
@@ -2630,12 +2631,14 @@ void remote_action(RA action, ...){
 #endif
         case RA::RA_EFF_NEXT:
             resetAutoTimers(); // сборс таймера демо, если есть перемещение
-            myLamp.DelayedAutoEffectConfigSave(0);
+            //myLamp.DelayedAutoEffectConfigSave(0);
+            myLamp.effects.autoSaveConfig();
             myLamp.switcheffect(SW_NEXT, myLamp.getFaderFlag());
             return remote_action(RA::RA_EFFECT, String(myLamp.effects.getSelected()).c_str(), NULL);
         case RA::RA_EFF_PREV:
             resetAutoTimers(); // сборс таймера демо, если есть перемещение
-            myLamp.DelayedAutoEffectConfigSave(0);
+            //myLamp.DelayedAutoEffectConfigSave(0);
+            myLamp.effects.autoSaveConfig();
             myLamp.switcheffect(SW_PREV, myLamp.getFaderFlag());
             return remote_action(RA::RA_EFFECT, String(myLamp.effects.getSelected()).c_str(), NULL);
         case RA::RA_EFF_RAND:

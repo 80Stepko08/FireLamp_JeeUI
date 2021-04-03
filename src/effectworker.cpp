@@ -439,8 +439,6 @@ void EffectWorker::loadeffname(String& _effectName, const uint16_t nb, const cha
   if (ok && doc[F("name")]){
     _effectName = doc[F("name")].as<String>(); // перенакрываем именем из конфига, если есть
   } else if(!ok) {
-    // LittleFS.remove(filename);
-    // savedefaulteffconfig(nb, filename);   // пробуем перегенерировать поврежденный конфиг
     _effectName = FPSTR(T_EFFNAMEID[(uint8_t)nb]);   // выбираем имя по-умолчанию из флеша если конфиг поврежден
   }
 #endif
@@ -605,11 +603,6 @@ void EffectWorker::savedefaulteffconfig(uint16_t nb, String &filename){
   
   File configFile = LittleFS.open(filename, "w"); // PSTR("w") использовать нельзя, будет исключение!
   if (configFile){
-    /*
-    WriteBufferingStream buff(configFile, FILEIO_BUFFSIZE);
-    buff.write(cfg.c_str());
-    buff.flush();
-    */
     configFile.print(cfg.c_str());
     configFile.close();
   }
@@ -688,7 +681,14 @@ void EffectWorker::chckdefconfigs(const char *folder){
   }
 }
 
-bool EffectWorker::autoSaveConfig(bool force, bool reset) {
+void EffectWorker::autoSaveConfig(bool force) {
+    if (force){
+        tConfigSave.disable();
+        saveeffconfig(curEff);
+    } else {
+        tConfigSave.restartDelayed();
+    }
+/*
   static unsigned long i; // getConfigSaveTimeout()
   if((i + (CFG_AUTOSAVE_TIMEOUT - 1000) > millis() || reset) && !force){  // если не пришло время - выходим из функции и сбрасываем счетчик (ожидаем бездействия в 30 секунд относительно последней записи)
       i = millis();
@@ -696,9 +696,9 @@ bool EffectWorker::autoSaveConfig(bool force, bool reset) {
   }
   LOG(printf_P,PSTR("Сохраняется конфигурация эффекта: %d\n"),curEff);
   saveeffconfig(curEff);
-  //saveConfig();
   i = millis();
   return true; // сохранились
+*/
 }
 
 // конструктор копий эффектов
