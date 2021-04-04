@@ -676,7 +676,6 @@ void EffectWorker::chckdefconfigs(const char *folder){
     String cfgfilename = geteffectpathname(i, folder);
     if(!LittleFS.exists(cfgfilename)){ // если конфига эффекта не существует, создаем дефолтный
       savedefaulteffconfig(i, cfgfilename);
-      //yield();
     }
   }
 }
@@ -688,17 +687,6 @@ void EffectWorker::autoSaveConfig(bool force) {
     } else {
         tConfigSave.restartDelayed();
     }
-/*
-  static unsigned long i; // getConfigSaveTimeout()
-  if((i + (CFG_AUTOSAVE_TIMEOUT - 1000) > millis() || reset) && !force){  // если не пришло время - выходим из функции и сбрасываем счетчик (ожидаем бездействия в 30 секунд относительно последней записи)
-      i = millis();
-      return false;
-  }
-  LOG(printf_P,PSTR("Сохраняется конфигурация эффекта: %d\n"),curEff);
-  saveeffconfig(curEff);
-  i = millis();
-  return true; // сохранились
-*/
 }
 
 // конструктор копий эффектов

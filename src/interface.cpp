@@ -45,12 +45,17 @@ JeeUI2 lib used under MIT License Copyright (c) 2019 Marsel Akhkamov
     #include "esp_littlefs.h"
 #endif
 
+#ifdef DELAYED_EFFECTS
+ #define INDEX_BUILD_DELAY 5
+#else
+ #define INDEX_BUILD_DELAY 1
+#endif
 
-Ticker optionsTicker;          // планировщик заполнения списка
-Ticker sysTicker;              // системный планировщик
-String tmpData;                // временное хранилище для отложенных операций (sysTicker)
-Ticker ctrlsTicker;            // планировщик контролов
-String tmpData2;               // временное хранилище для отложенных операций (ctrlsTicker)
+// планировщик заполнения списка
+Task optionsTicker(5 * TASK_SECOND, TASK_ONCE, delayedcall_show_effects_config, &ts, false );
+Task ctrlsTicker;            // планировщик контролов
+
+static EffectListElem *confEff = nullptr;
 
 bool check_recovery_state(bool isSet){
     bool state = false; //return state;
@@ -151,7 +156,7 @@ void pubCallback(Interface *interf){
 void block_menu(Interface *interf, JsonObject *data){
     if (!interf) return;
     // создаем меню
-    embui.autoSaveReset(); // автосохранение конфига будет отсчитываться от этого момента
+    //embui.autoSaveReset(); // автосохранение конфига будет отсчитываться от этого момента
     interf->json_section_menu();
 
     interf->option(FPSTR(TCONST_0000), FPSTR(TINTF_000));   //  Эффекты
@@ -165,7 +170,6 @@ void block_menu(Interface *interf, JsonObject *data){
     interf->json_section_end();
 }
 
-static EffectListElem *confEff = nullptr;
 /**
  * Страница с контролами параметров эфеекта
  * 
@@ -231,8 +235,7 @@ void delayedcall_effects_main();
  */
 void set_effects_config_param(Interface *interf, JsonObject *data){
     if (!confEff || !data) return;
-    if(optionsTicker.active())
-        optionsTicker.detach();
+    optionsTicker.disable();
     
     SETPARAM(FPSTR(TCONST_0050), myLamp.effects.setEffSortType((*data)[FPSTR(TCONST_0050)].as<SORT_TYPE>()));
     
@@ -256,35 +259,35 @@ void set_effects_config_param(Interface *interf, JsonObject *data){
         myLamp.sendString(tmpStr.c_str(), CRGB::Red);
         //confEff = myLamp.effects.getEffect(EFF_ENUM::EFF_NONE);
         if(isCfgRemove){
-#ifndef DELAYED_EFFECTS
-            sysTicker.once(5,std::bind([]{
-#else
-            sysTicker.once(1,std::bind([]{
-#endif
-                myLamp.effects.makeIndexFileFromFS(); // создаем индекс по файлам ФС и на выход
-                delayedcall_effects_main();
-            }));
+            Task *_t = new Task(
+                INDEX_BUILD_DELAY * TASK_SECOND,
+                TASK_ONCE, [](){
+                                   myLamp.effects.makeIndexFileFromFS(); // создаем индекс по файлам ФС и на выход
+                                   delayedcall_effects_main();
+                                   TASK_RECYCLE; },
+                &ts, false);
+            _t->enableDelayed();
         } else {
-#ifndef DELAYED_EFFECTS
-            sysTicker.once(5,std::bind([]{
-#else
-            sysTicker.once(1,std::bind([]{
-#endif
-                myLamp.effects.makeIndexFileFromList(); // создаем индекс по текущему списку и на выход
-                delayedcall_effects_main();
-            }));
+            Task *_t = new Task(
+                INDEX_BUILD_DELAY * TASK_SECOND,
+                TASK_ONCE, [](){
+                                    myLamp.effects.makeIndexFileFromList(); // создаем индекс по текущему списку и на выход
+                                    delayedcall_effects_main();
+                                    TASK_RECYCLE; },
+                &ts, false);
+            _t->enableDelayed();
         }
         section_main_frame(interf, data);
         return;
     } else if (act == FPSTR(TCONST_000B)) {
-#ifndef DELAYED_EFFECTS
-        sysTicker.once(5,std::bind([]{
-#else
-        sysTicker.once(1,std::bind([]{
-#endif
-            myLamp.effects.makeIndexFileFromFS(); // создаем индекс по файлам ФС и на выход
-            delayedcall_effects_main();
-        }));
+        Task *_t = new Task(
+            INDEX_BUILD_DELAY * TASK_SECOND,
+            TASK_ONCE, [](){
+                                myLamp.effects.makeIndexFileFromFS(); // создаем индекс по файлам ФС и на выход
+                                delayedcall_effects_main();
+                                TASK_RECYCLE; },
+            &ts, false);
+        _t->enableDelayed();
         section_main_frame(interf, data);
         return;
     } else if (act == FPSTR(TCONST_0093)) {
@@ -381,17 +384,26 @@ void block_effects_config(Interface *interf, JsonObject *data, bool fast=true){
     interf->json_section_end();
 }
 
+// Построение выпадающего списка эффектов для вебморды
 void delayedcall_show_effects_config(){
+
+    LOG(println, F("=== GENERATE EffLIst for GUI===="));
+    if (!confEff)   // нет значения - выметаемся
+        return;
+
     Interface *interf = embui.ws.count()? new Interface(&embui, &embui.ws, 3000) : nullptr;
     if (!interf) return;
     interf->json_frame_interface();
     interf->json_section_content();
+
+
     interf->select(FPSTR(TCONST_0010), String((int)confEff->eff_nb), String(FPSTR(TINTF_00A)), true, true); // не выводить метку
     EffectListElem *eff = nullptr;
     String effname((char *)0);
     MIC_SYMB;
     //bool numList = myLamp.getLampSettings().numInList;
     while ((eff = myLamp.effects.getNextEffect(eff)) != nullptr) {
+
         myLamp.effects.loadeffname(effname, eff->eff_nb);
         interf->option(String(eff->eff_nb),
             //EFF_NUMBER + 
@@ -410,8 +422,6 @@ void delayedcall_show_effects_config(){
     interf->json_section_end();
     interf->json_frame_flush();
     delete interf;
-    if(optionsTicker.active())
-        optionsTicker.detach();
 }
 
 void show_effects_config(Interface *interf, JsonObject *data){
@@ -420,8 +430,9 @@ void show_effects_config(Interface *interf, JsonObject *data){
     interf->json_frame_interface();
     block_effects_config(interf, data);
     interf->json_frame_flush();
-    if(!optionsTicker.active())
-        optionsTicker.once(10,std::bind(delayedcall_show_effects_config));
+    if (!optionsTicker.isEnabled())
+        optionsTicker.restartDelayed();
+
 #else
     if (!interf) return;
     interf->json_frame_interface();
@@ -434,13 +445,8 @@ void set_effects_config_list(Interface *interf, JsonObject *data){
     if (!data) return;
     uint16_t num = (*data)[FPSTR(TCONST_0010)].as<uint16_t>();
 
-    // Так  нельзя :(, поскольку интерфейс отдаст только effListConf, а не весь блок...
-    // А мне хотелось бы попереключать список, сделав несколько изменений в флагах, не нажимая для каждого раза "сохранить"
-    // Есть красивый способ это сделать по переключению списка?
     if(confEff){ // если переключаемся, то сохраняем предыдущие признаки в эффект до переключения
         LOG(printf_P, PSTR("eff_sel: %d eff_fav : %d\n"), (*data)[FPSTR(TCONST_0006)].as<bool>(),(*data)[FPSTR(TCONST_0007)].as<bool>());
-        // confEff->canBeSelected((*data)[FPSTR(TCONST_0006)] == "1");
-        // confEff->isFavorite((*data)[FPSTR(TCONST_0007)] == "1");
     }
 
     confEff = myLamp.effects.getEffect(num);
@@ -582,12 +588,13 @@ void set_effects_dynCtrl(Interface *interf, JsonObject *data){
     if (!data) return;
 
     // попытка повышения стабильности, отдаем управление браузеру как можно быстрее...
-    serializeJson(*data,tmpData2);
     resetAutoTimers(true);
-    ctrlsTicker.once(0.1,std::bind([]{
-        DynamicJsonDocument docum(1024);
-        deserializeJson(docum, tmpData2);
-        JsonObject dataStore = docum.as<JsonObject>();
+
+    DynamicJsonDocument *_str = new DynamicJsonDocument(1024);
+    (*_str)=(*data);
+
+    new Task(300, TASK_ONCE, [_str](){
+        JsonObject dataStore = (*_str).as<JsonObject>();
         JsonObject *data = &dataStore;
 
         String ctrlName;
@@ -615,8 +622,9 @@ void set_effects_dynCtrl(Interface *interf, JsonObject *data){
             }
         }
 
-        tmpData2.clear();
-    }));
+        delete _str;
+        TASK_RECYCLE; }
+    );
 }
 
 /**
@@ -711,8 +719,7 @@ void delayedcall_effects_main(){
     interf->json_section_end();
     interf->json_frame_flush();
     delete interf;
-    if(optionsTicker.active())
-        optionsTicker.detach();
+    optionsTicker.disable();
 }
 
 // Страница "Управление эффектами"
@@ -802,8 +809,8 @@ void block_effects_main(Interface *interf, JsonObject *data, bool fast=true){
 
     interf->json_section_end();
 #ifdef DELAYED_EFFECTS
-    if(!optionsTicker.active())
-        optionsTicker.once(10,std::bind(delayedcall_effects_main));
+    if (!optionsTicker.isEnabled())
+        optionsTicker.restartDelayed();
 #endif
 }
 
@@ -832,10 +839,13 @@ void set_onflag(Interface *interf, JsonObject *data){
                 mp3->setIsOn(true);
 #endif
 #ifndef ESP_USE_BUTTON
-            if(millis()<10000)
-                sysTicker.once(3,std::bind([]{
-                    myLamp.sendString(WiFi.localIP().toString().c_str(), CRGB::White);
-                }));
+            if(millis()<10000){
+                Task *_t = new Task(
+                    INDEX_BUILD_DELAY * TASK_SECOND,
+                    TASK_ONCE, [](){ myLamp.sendString(WiFi.localIP().toString().c_str(), CRGB::White); TASK_RECYCLE; },
+                    &ts, false);
+                _t->enableDelayed();
+            }
 #endif
             embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_0070), "1", true);
             embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_0021), String(myLamp.getMode()), true);
@@ -843,18 +853,21 @@ void set_onflag(Interface *interf, JsonObject *data){
         } else {
             resetAutoTimers(); // автосохранение конфига будет отсчитываться от этого момента
             //myLamp.changePower(newpower);
-            sysTicker.once(0.3,std::bind([]{ // при выключении бывает эксепшен, видимо это слишком длительная операция, разносим во времени и отдаем управление
-                myLamp.changePower(false);
-#ifdef MP3PLAYER
-                mp3->setIsOn(false);
-#endif
-#ifdef RESTORE_STATE
-                save_lamp_flags(); // злобный баг, забыть передернуть флаги здесь)))), не вздумать убрать!!! Отлавливал его кучу времени
-#endif
-                embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_0070), "0", true);
-                embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_0021), String(myLamp.getMode()), true);
-                embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_00AA), String(myLamp.getMode()==LAMPMODE::MODE_DEMO?"1":"0"), true);
-            }));
+            Task *_t = new Task(300, TASK_ONCE,
+                                [](){ // при выключении бывает эксепшен, видимо это слишком длительная операция, разносим во времени и отдаем управление
+                                myLamp.changePower(false);
+                #ifdef MP3PLAYER
+                                mp3->setIsOn(false);
+                #endif
+                #ifdef RESTORE_STATE
+                                save_lamp_flags(); // злобный баг, забыть передернуть флаги здесь)))), не вздумать убрать!!! Отлавливал его кучу времени
+                #endif
+                                embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_0070), "0", true);
+                                embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_0021), String(myLamp.getMode()), true);
+                                embui.publish(String(FPSTR(TCONST_008B)) + FPSTR(TCONST_00AA), String(myLamp.getMode()==LAMPMODE::MODE_DEMO?"1":"0"), true);
+                                TASK_RECYCLE; },
+                                &ts, false);
+            _t->enableDelayed();
         }
     }
 #ifdef RESTORE_STATE
@@ -1041,10 +1054,9 @@ void edit_lamp_config(Interface *interf, JsonObject *data){
         String str = String(F("CFG:")) + name;
         myLamp.sendString(str.c_str(), CRGB::Red);
 
-        sysTicker.once(3,std::bind([](){
-            sync_parameters();
-        }));
-        //myLamp.changePower(true);
+        Task *_t = new Task(3*TASK_SECOND, TASK_ONCE, [](){ sync_parameters(); TASK_RECYCLE; }, &ts, false);
+        _t->enableDelayed();
+
     } else { // создание
         if(!name.endsWith(F(".json"))){
             name.concat(F(".json"));
@@ -1506,17 +1518,15 @@ void show_settings_other(Interface *interf, JsonObject *data){
 void set_settings_other(Interface *interf, JsonObject *data){
     if (!data) return;
 
-    serializeJson(*data,tmpData);
     resetAutoTimers();
-    sysTicker.once(0.3,std::bind([]{
-        DynamicJsonDocument docum(1024);
-        deserializeJson(docum, tmpData);
-        JsonObject dataStore = docum.as<JsonObject>();
+
+    DynamicJsonDocument *_str = new DynamicJsonDocument(1024);
+    (*_str)=(*data);
+
+    Task *_t = new Task(300, TASK_ONCE, [_str](){
+        JsonObject dataStore = (*_str).as<JsonObject>();
         JsonObject *data = &dataStore;
-        // if(!(*data).containsKey(FPSTR(TCONST_004C))) {
-        //     LOG(printf_P,PSTR("Error: %s\n"),tmpData.c_str());
-        //     return;
-        // }
+
         // LOG(printf_P,PSTR("Settings: %s\n"),tmpData.c_str());
         myLamp.setMIRR_H((*data)[FPSTR(TCONST_004C)] == "1");
         myLamp.setMIRR_V((*data)[FPSTR(TCONST_004D)] == "1");
@@ -1542,8 +1552,12 @@ void set_settings_other(Interface *interf, JsonObject *data){
         //LOG(printf_P, PSTR("alatmPT=%d, alatmP=%d, alatmT=%d\n"), alatmPT, myLamp.getAlarmP(), myLamp.getAlarmT());
 
         save_lamp_flags();
-        tmpData.clear();
-    }));
+        delete _str;
+        TASK_RECYCLE; },
+        &ts, false
+    );
+    _t->enableDelayed();
+
 
     section_settings_frame(interf, data);
 }
@@ -2089,8 +2103,7 @@ void set_mp3_player(Interface *interf, JsonObject *data){
 #endif
 
 void section_effects_frame(Interface *interf, JsonObject *data){
-    if(optionsTicker.active())
-        optionsTicker.detach();
+    optionsTicker.disable();
     if (!interf) return;
     interf->json_frame_interface(FPSTR(TINTF_080));
     block_effects_main(interf, data);
@@ -2213,10 +2226,16 @@ void set_sys_settings(Interface *interf, JsonObject *data){
 #endif
     SETPARAM(FPSTR(TCONST_0098));
     myLamp.sendString(String(FPSTR(TINTF_096)).c_str(), CRGB::Red);
+
+    new Task(TASK_SECOND, TASK_ONCE, nullptr, &ts, true, nullptr, [](){ embui.autosave(true); });
+
+    new Task(5 * TASK_SECOND, TASK_ONCE, nullptr, &ts, true, nullptr,  [](){ LOG(println, F("Rebooting...")); delay(100); ESP.restart(); });
+/*
     sysTicker.once(10,std::bind([]{
-        embui.save();
+        embui.autosave(true);
         ESP.restart();
     }));
+*/
     section_effects_frame(interf,data);
 }
 
@@ -2593,9 +2612,7 @@ void remote_action(RA action, ...){
             } else {
                 myLamp.switcheffect(SW_NEXT_DEMO, myLamp.getFaderFlag());
             }
-            sysTicker.once(3,std::bind([]{
-                remote_action(RA::RA_EFFECT, String(myLamp.effects.getSelected()).c_str(), NULL);
-            }));
+            new Task(TASK_SECOND, TASK_ONCE, nullptr, &ts, true, nullptr, [](){ remote_action(RA::RA_EFFECT, String(myLamp.effects.getSelected()).c_str(), NULL); TASK_RECYCLE; });
             break;
         case RA::RA_EFFECT: {
             if(myLamp.getMode()==LAMPMODE::MODE_NORMAL)
@@ -2631,13 +2648,11 @@ void remote_action(RA action, ...){
 #endif
         case RA::RA_EFF_NEXT:
             resetAutoTimers(); // сборс таймера демо, если есть перемещение
-            //myLamp.DelayedAutoEffectConfigSave(0);
             myLamp.effects.autoSaveConfig();
             myLamp.switcheffect(SW_NEXT, myLamp.getFaderFlag());
             return remote_action(RA::RA_EFFECT, String(myLamp.effects.getSelected()).c_str(), NULL);
         case RA::RA_EFF_PREV:
             resetAutoTimers(); // сборс таймера демо, если есть перемещение
-            //myLamp.DelayedAutoEffectConfigSave(0);
             myLamp.effects.autoSaveConfig();
             myLamp.switcheffect(SW_PREV, myLamp.getFaderFlag());
             return remote_action(RA::RA_EFFECT, String(myLamp.effects.getSelected()).c_str(), NULL);
@@ -2658,9 +2673,7 @@ void remote_action(RA action, ...){
             break;
         case RA::RA_REBOOT:
             remote_action(RA::RA_WARNING, F("[16711680,3000,500]"), NULL);
-            sysTicker.once(3,std::bind([]{
-                ESP.restart(); // так лучше :)
-            }));
+            new Task(3 * TASK_SECOND, TASK_ONCE, nullptr, &ts, true, nullptr,  [](){ ESP.restart(); });
             break;
         case RA::RA_WIFI_REC:
             CALL_INTF(FPSTR(TINTF_028), FPSTR(TCONST_0080), set_settings_wifi);

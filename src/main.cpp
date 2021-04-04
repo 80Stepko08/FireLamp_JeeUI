@@ -47,7 +47,6 @@ JeeUI2 lib used under MIT License Copyright (c) 2019 Marsel Akhkamov
 
 // глобальные переменные для работы с ними в программе
 LAMP myLamp;
-Ticker _isrHelper;       // планировщик для обработки прерываний
 #ifdef ESP_USE_BUTTON
 Buttons *myButtons;
 #endif
@@ -113,7 +112,7 @@ void setup() {
 #endif
   sync_parameters();        // падение есп32 не воспоизводится, kDn
 
-    embui.setPubInterval(60);   // change periodic WebUI publish interval to 60 sec
+  embui.setPubInterval(60);   // change periodic WebUI publish interval to 60 sec
 
   // periodic MQTT publish
   Task *t = new Task(myLamp.getmqtt_int() * TASK_SECOND, TASK_FOREVER, [](){ sendData(); }, &ts, false);
@@ -186,21 +185,14 @@ void sendData(bool force){
 
 #ifdef ESP_USE_BUTTON
 /*
- * Используем обертку и тикер ибо:
- * 1) убираем функции с ICACHE из класса лампы
- * 2) Тикер не может дернуть нестатический метод класса
- */
-ICACHE_FLASH_ATTR void buttonhelper(bool state){
-  embui.autoSaveReset();
-  myButtons->buttonPress(state);
-}
-
-/*
  *  Button pin interrupt handler
  */
 ICACHE_RAM_ATTR void buttonpinisr(){
     detachInterrupt(myLamp.getbPin());
-    _isrHelper.once_ms(0, buttonhelper, myButtons->getpinTransition());   // вместо флага используем тикер :)
+    //_isrHelper.once_ms(0, buttonhelper, myButtons->getpinTransition());   // вместо флага используем тикер :)
+    bool _t = myButtons->getpinTransition();
+    new Task(1, TASK_ONCE, nullptr, &ts, true, nullptr,  [_t](){ myButtons->buttonPress(_t); TASK_RECYCLE; });
+
     myButtons->setpinTransition(!myButtons->getpinTransition());
     attachInterrupt(digitalPinToInterrupt(myLamp.getbPin()), buttonpinisr, myButtons->getpinTransition() ? myButtons->getPressTransitionType() : myButtons->getReleaseTransitionType());  // меням прерывание
 }

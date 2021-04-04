@@ -113,11 +113,6 @@ void LAMP::handle()
   }
 #endif
 
-// Deprecated
-// #if defined(LAMP_DEBUG) && DEBUG_TELNET_OUTPUT
-//   handleTelnetClient();
-// #endif
-
   // все что ниже, будет выполняться раз в 0.999 секундy
   static unsigned long wait_handlers;
   if (wait_handlers + 999U > millis())
@@ -252,15 +247,9 @@ void LAMP::alarmWorker(){
 }
 
 void LAMP::effectsTick(){
-  /*
-   * Здесь имеет место странная специфика тикера,
-   * если где-то в коде сделали детач, но таймер уже успел к тому времени "выстрелить"
-   * функция все равно будет запущена в loop(), она просто ждет своей очереди
-   */
-  _begin = millis();
+  uint32_t _begin = millis();
 
-  if (_effectsTicker.active() && !isAlarm()) { // && !isWarning()
-    //if(millis()<5000) return; // затычка до выяснения
+  if (_effectsTicker.isEnabled() && !isAlarm()) { // && !isWarning()
     if(!lampState.isEffectsDisabledUntilText){
       if (!ledsbuff.empty()) {
         std::copy( ledsbuff.begin(), ledsbuff.end(), getUnsafeLedsArray() );
@@ -304,18 +293,13 @@ void LAMP::effectsTick(){
 
   if (isWarning() || isAlarm() || lampState.isEffectsDisabledUntilText || (effects.worker ? effects.worker->status() : 1) || lampState.isStringPrinting) {
     // выводим кадр только если есть текст или эффект
-#ifdef ESP8266
-    _effectsTicker.once_ms_scheduled(LED_SHOW_DELAY, std::bind(&LAMP::frameShow, this, _begin));
-#elif defined ESP32
-    _effectsTicker.once_ms(LED_SHOW_DELAY, std::bind(&LAMP::frameShow, this, _begin));
-#endif
+    _effectsTicker.set(LED_SHOW_DELAY, TASK_ONCE, [this, _begin](){frameShow(_begin);});
+    _effectsTicker.restartDelayed();
+
   } else if(isLampOn()) {
     // иначе возвращаемся к началу обсчета следующего кадра
-#ifdef ESP8266
-    _effectsTicker.once_ms_scheduled(EFFECTS_RUN_TIMER, std::bind(&LAMP::effectsTick, this));
-#elif defined ESP32
-    _effectsTicker.once_ms(EFFECTS_RUN_TIMER, std::bind(&LAMP::effectsTick, this));
-#endif
+    _effectsTicker.set(EFFECTS_RUN_TIMER, TASK_ONCE, [this](){effectsTick();});
+    _effectsTicker.restartDelayed();
   }
 }
 
@@ -324,26 +308,17 @@ void LAMP::effectsTick(){
  * и перезапуск эффект-процессора
  */
 void LAMP::frameShow(const uint32_t ticktime){
-  /*
-   * Здесь имеет место странная специфика тикера,
-   * если где-то в коде сделали детач, но таймер уже успел к тому времени "выстрелить"
-   * функция все равно будет запущена в loop(), она просто ждет своей очереди
-   */
+  if ( !fader->inprogress() && !isLampOn() && !isAlarm() ) return;
 
   FastLED.show();
-  if (!_effectsTicker.active() || (!_brt && !isLampOn() && !isAlarm()) ) return;
 
   // откладываем пересчет эффекта на время для желаемого FPS, либо
   // на минимальный интервал в следующем loop()
   int32_t delay = (ticktime + EFFECTS_RUN_TIMER) - millis();
   if (delay < LED_SHOW_DELAY || !(effects.worker ? effects.worker->status() : 1)) delay = LED_SHOW_DELAY;
 
-#ifdef ESP8266
-  _effectsTicker.once_ms_scheduled(delay, std::bind(&LAMP::effectsTick, this));
-#elif defined ESP32
-  _effectsTicker.once_ms(delay, std::bind(&LAMP::effectsTick, this));
-#endif
-
+  _effectsTicker.set(delay, TASK_ONCE, [this](){effectsTick();});
+  _effectsTicker.restartDelayed();
   ++fps;
 }
 
@@ -382,8 +357,7 @@ void LAMP::frameShow(const uint32_t ticktime){
     }
 #endif
 
-//LAMP::LAMP() : docArrMessages(512), tmConfigSaveTime(0), tmStringStepTime(DEFAULT_TEXT_SPEED), tmNewYearMessage(0), _fadeTicker(), _reservedTicker()
-LAMP::LAMP() : docArrMessages(512), tmStringStepTime(DEFAULT_TEXT_SPEED), _fadeTicker(), _reservedTicker()
+LAMP::LAMP() : docArrMessages(512), tmStringStepTime(DEFAULT_TEXT_SPEED), tmNewYearMessage(0)
 #ifdef OTA
     , otaManager((void (*)(CRGB, uint32_t, uint16_t))(&showWarning))
 #endif
@@ -422,10 +396,6 @@ LAMP::LAMP() : docArrMessages(512), tmStringStepTime(DEFAULT_TEXT_SPEED), _fadeT
       flags.limitAlarmVolume = false;
       flags.isDraw = false;
 
-      _brt =0;
-      _steps = 0;
-      _brtincrement = 0;
-
 #ifdef VERTGAUGE
       gauge_time = millis();
 #endif
@@ -433,6 +403,13 @@ LAMP::LAMP() : docArrMessages(512), tmStringStepTime(DEFAULT_TEXT_SPEED), _fadeT
       lampState.speedfactor = 1.0; // дефолтное значение
       lampState.brightness = 127;
       //lamp_init(); // инициализация и настройка лампы (убрано, будет настройка снаружи)
+
+      // tasks binding
+      _demoTicker.set(DEFAULT_DEMO_TIMER * TASK_SECOND, TASK_FOREVER, std::bind(&remote_action, RA::RA_DEMO_NEXT, NULL));
+      ts.addTask(_demoTicker);
+
+      ts.addTask(_effectsTicker);
+      fader = new LEDFader(this);
     }
 
 void LAMP::changePower() {changePower(!flags.ONflag);}
@@ -556,14 +533,11 @@ void LAMP::restoreStored()
   if(storedBright)
     setLampBrightness(storedBright);
   if (static_cast<EFF_ENUM>(storedEffect) != EFF_NONE) {    // ничего не должно происходить, включаемся на текущем :), текущий всегда определен...
-    _reservedTicker.once(3,std::bind([this]{ // отсрочка возврата на 3 секунды, чтобы фейдер завершил работу
-      remote_action(RA::RA_EFFECT, String(storedEffect).c_str(), NULL);
-      //effects.directMoveBy(storedEffect);
-    }));
+    Task *_t = new Task(3 * TASK_SECOND, TASK_ONCE, [this](){remote_action(RA::RA_EFFECT, String(storedEffect).c_str(), NULL); TASK_RECYCLE; }, &ts, false);
+    _t->enableDelayed();
   } else if(static_cast<EFF_ENUM>(effects.getEn()%256) == EFF_NONE) { // если по каким-то причинам текущий пустой, то выбираем рандомный
-    _reservedTicker.once(3,std::bind([this]{ // отсрочка возврата на 3 секунды, чтобы фейдер завершил работу
-      remote_action(RA::RA_EFF_RAND, NULL);
-    }));
+    Task *_t = new Task(3 * TASK_SECOND, TASK_ONCE, [this](){remote_action(RA::RA_EFF_RAND, NULL); TASK_RECYCLE; }, &ts, false);
+    _t->enableDelayed();
   }
 }
 
@@ -1011,36 +985,6 @@ void LAMP::micHandler()
 }
 #endif
 
-void LAMP::fadelight(const uint8_t _targetbrightness, const uint32_t _duration, std::function<void(void)> callback) {
-    LOG(printf, PSTR("Fading to: %d\n"), _targetbrightness);
-    _fadeTicker.detach();
-
-    uint8_t _maxsteps = _duration / FADE_STEPTIME;
-    _brt = getBrightness();
-    uint8_t _brtdiff = abs(_targetbrightness - _brt);
-
-    if (_brtdiff > FADE_MININCREMENT * _maxsteps) {
-        _steps = _maxsteps;
-    } else {
-        _steps = _brtdiff/FADE_MININCREMENT;
-    }
-
-    if (_steps < 3) {
-        brightness(_targetbrightness);
-#ifdef ESP8266
-        if (callback != nullptr) _fadeTicker.once_ms_scheduled(0, callback);
-#elif defined ESP32
-        if (callback != nullptr) _fadeTicker.once_ms(0, callback);
-#endif
-        return;
-    }
-
-    _brtincrement = (_targetbrightness - _brt) / _steps;
-
-    //_SPTO(Serial.printf_P, F_fadeinfo, _brt, _targetbrightness, _steps, _brtincrement)); _SPLN("");
-    _fadeTicker.attach_ms(FADE_STEPTIME, std::bind(&LAMP::fader, this, _targetbrightness, callback));
-}
-
 /*
  * Change global brightness with or without fade effect
  * fade applied in non-blocking way
@@ -1081,28 +1025,6 @@ void LAMP::brightness(const uint8_t _brt, bool natural){
       FastLED.setBrightness(0); // полностью гасим лапу если нужна 0-я яркость
       FastLED.show();
     }
-}
-
-/*
- * Fade light callback
- * @param uint8_t _tgtbrt - last step brightness
- */
-void LAMP::fader(const uint8_t _tgtbrt, std::function<void(void)> callback){
-  --_steps;
-  if (! _steps) {   // on last step
-      if (callback != nullptr) {
-#ifdef ESP8266
-        _fadeTicker.once_ms_scheduled(0, callback);
-#elif defined ESP32
-        _fadeTicker.once_ms(0, callback);
-#endif
-      } else { _fadeTicker.detach(); }
-      _brt = _tgtbrt;
-  } else {
-      _brt += _brtincrement;
-  }
-
-  brightness(_brt);
 }
 
 /*
@@ -1215,22 +1137,18 @@ void LAMP::switcheffect(EFFSWITCH action, bool fade, uint16_t effnb, bool skip) 
  * @param SCHEDULER enable/disable/reset - вкл/выкл/сброс
  */
 void LAMP::demoTimer(SCHEDULER action, byte tmout){
-//  LOG.printf_P(PSTR("demoTimer: %u\n"), action);
   switch (action)
   {
   case SCHEDULER::T_DISABLE :
-    _demoTicker.detach();
+    _demoTicker.disable();
     break;
   case SCHEDULER::T_ENABLE :
-#ifdef ESP8266
-    _demoTicker.attach_scheduled(tmout, std::bind(&remote_action, RA::RA_DEMO_NEXT, NULL));
-#elif defined ESP32
-    _demoTicker.attach(tmout, std::bind(&remote_action, RA::RA_DEMO_NEXT, NULL));
-#endif
+    _demoTicker.setInterval(tmout * TASK_SECOND);
+    _demoTicker.enableIfNot();
     break;
   case SCHEDULER::T_RESET :
     if (isAlarm()) stopAlarm(); // тут же сбросим и будильник
-    if (_demoTicker.active() ) demoTimer(T_ENABLE);
+      _demoTicker.restart();
     break;
   default:
     return;
@@ -1246,17 +1164,15 @@ void LAMP::effectsTimer(SCHEDULER action) {
   switch (action)
   {
   case SCHEDULER::T_DISABLE :
-    _effectsTicker.detach();
+    _effectsTicker.disable();
     break;
   case SCHEDULER::T_ENABLE :
-#ifdef ESP8266
-    _effectsTicker.once_ms_scheduled(EFFECTS_RUN_TIMER, std::bind(&LAMP::effectsTick, this));
-#elif defined ESP32
-    _effectsTicker.once_ms(EFFECTS_RUN_TIMER, std::bind(&LAMP::effectsTick, this));
-#endif
+    _effectsTicker.set(EFFECTS_RUN_TIMER, TASK_ONCE, [this](){effectsTick();});
+    _effectsTicker.restartDelayed();
     break;
   case SCHEDULER::T_RESET :
-    if (_effectsTicker.active() ) effectsTimer(T_ENABLE);
+    if (_effectsTicker.isEnabled() )
+      _effectsTicker.restartDelayed();
     break;
   default:
     return;
@@ -1342,32 +1258,57 @@ void LAMP::showWarning2(
   uint8_t warnType,                                         /* тип предупреждения 0...3                                     */
   bool forcerestart)                                        /* перезапускать, если пришло повторное событие предупреждения  */
 {
-  if(forcerestart || !_warningTicker.active()){
     warn_color = color;
-    warn_duration = duration;
-    warn_blinkHalfPeriod = blinkHalfPeriod;
     lampState.isWarning = true;
     lampState.warnType = warnType;
+    warn_duration = duration;
+    warn_blinkHalfPeriod = blinkHalfPeriod;
+
+  if(forcerestart && _warningTicker){
+    _warningTicker->setInterval(blinkHalfPeriod);
+    _warningTicker->setIterations(duration/blinkHalfPeriod);     // вероятна ошибка округления нечетного числа периодов, если критично нужно будет исправить
+  } else {
+    // динамический тикер переключает флаг lampState.isWarning каждые blinkHalfPeriod мс в течение duration мс, по завершении утилизирует сам себя
+    _warningTicker = new Task( blinkHalfPeriod, duration/blinkHalfPeriod, [this](){ lampState.isWarning=!lampState.isWarning; }, &ts, false, nullptr, [this](){lampState.isWarning = false; embui.taskRecycle(_warningTicker); _warningTicker = nullptr;} );
+    _warningTicker->enableDelayed();
   }
 
-  if(!forcerestart && warnType!=3)
-    lampState.isWarning=!lampState.isWarning;
-  if(warn_duration>warn_blinkHalfPeriod)
-    warn_duration-=warn_blinkHalfPeriod;
-  else
-    warn_duration=0;
-  if(warn_duration){
-    if(_warningTicker.active())
-      _warningTicker.detach();
-#ifdef ESP8266
-    _warningTicker.once_ms_scheduled(blinkHalfPeriod, std::bind(&LAMP::showWarning2, this, warn_color, warn_duration, warn_blinkHalfPeriod, (uint8_t)lampState.warnType, !lampState.isWarning));
-#elif defined ESP32
-    _warningTicker.once_ms(blinkHalfPeriod, std::bind(&LAMP::showWarning2, this, warn_color, warn_duration, warn_blinkHalfPeriod, (uint8_t)lampState.warnType, !lampState.isWarning));
-#endif
+}
 
-  }
-  else {
-    lampState.isWarning = false;
-    _warningTicker.detach();
-  }
+
+void LEDFader::run(const uint8_t _targetbrightness, const uint32_t _duration, std::function<void(void)> callback){
+    _cb = callback;
+
+    LOG(printf, PSTR("Fading to: %d\n"), _targetbrightness);
+
+    uint8_t _maxsteps = _duration / FADE_STEPTIME;
+    _brt = lmp->getBrightness();
+    uint8_t _brtdiff = abs(_targetbrightness - _brt);
+    uint8_t _steps;
+    if (_brtdiff > FADE_MININCREMENT * _maxsteps) {
+        _steps = _maxsteps;
+    } else {
+        _steps = _brtdiff/FADE_MININCREMENT;
+    }
+
+    if (_steps < 3) {
+      onDisable(_targetbrightness);
+        return;
+    }
+
+    _brtincrement = (_targetbrightness - _brt) / _steps;
+
+    tFader.set(FADE_STEPTIME,
+                _steps,
+                [this](){_brt += _brtincrement; lmp->brightness(_brt);},
+                nullptr,
+                [this, _targetbrightness](){onDisable(_targetbrightness);}
+    );
+    tFader.restart();
+}
+
+void LEDFader::onDisable(uint8_t _b){
+  lmp->brightness(_b);
+  if(_cb) _cb();
+  _cb=nullptr;
 }
