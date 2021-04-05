@@ -249,7 +249,7 @@ void LAMP::alarmWorker(){
 void LAMP::effectsTick(){
   uint32_t _begin = millis();
 
-  if (_effectsTicker.isEnabled() && !isAlarm()) { // && !isWarning()
+  if (effectsTask.isEnabled() && !isAlarm()) { // && !isWarning()
     if(!lampState.isEffectsDisabledUntilText){
       if (!ledsbuff.empty()) {
         std::copy( ledsbuff.begin(), ledsbuff.end(), getUnsafeLedsArray() );
@@ -293,13 +293,13 @@ void LAMP::effectsTick(){
 
   if (isWarning() || isAlarm() || lampState.isEffectsDisabledUntilText || (effects.worker ? effects.worker->status() : 1) || lampState.isStringPrinting) {
     // выводим кадр только если есть текст или эффект
-    _effectsTicker.set(LED_SHOW_DELAY, TASK_ONCE, [this, _begin](){frameShow(_begin);});
-    _effectsTicker.restartDelayed();
+    effectsTask.set(LED_SHOW_DELAY, TASK_ONCE, [this, _begin](){frameShow(_begin);});
+    effectsTask.restartDelayed();
 
   } else if(isLampOn()) {
     // иначе возвращаемся к началу обсчета следующего кадра
-    _effectsTicker.set(EFFECTS_RUN_TIMER, TASK_ONCE, [this](){effectsTick();});
-    _effectsTicker.restartDelayed();
+    effectsTask.set(EFFECTS_RUN_TIMER, TASK_ONCE, [this](){effectsTick();});
+    effectsTask.restartDelayed();
   }
 }
 
@@ -317,8 +317,8 @@ void LAMP::frameShow(const uint32_t ticktime){
   int32_t delay = (ticktime + EFFECTS_RUN_TIMER) - millis();
   if (delay < LED_SHOW_DELAY || !(effects.worker ? effects.worker->status() : 1)) delay = LED_SHOW_DELAY;
 
-  _effectsTicker.set(delay, TASK_ONCE, [this](){effectsTick();});
-  _effectsTicker.restartDelayed();
+  effectsTask.set(delay, TASK_ONCE, [this](){effectsTick();});
+  effectsTask.restartDelayed();
   ++fps;
 }
 
@@ -405,10 +405,10 @@ LAMP::LAMP() : docArrMessages(512), tmStringStepTime(DEFAULT_TEXT_SPEED), tmNewY
       //lamp_init(); // инициализация и настройка лампы (убрано, будет настройка снаружи)
 
       // tasks binding
-      _demoTicker.set(DEFAULT_DEMO_TIMER * TASK_SECOND, TASK_FOREVER, std::bind(&remote_action, RA::RA_DEMO_NEXT, NULL));
-      ts.addTask(_demoTicker);
+      demoTask.set(DEFAULT_DEMO_TIMER * TASK_SECOND, TASK_FOREVER, std::bind(&remote_action, RA::RA_DEMO_NEXT, NULL));
+      ts.addTask(demoTask);
 
-      ts.addTask(_effectsTicker);
+      ts.addTask(effectsTask);
       fader = new LEDFader(this);
     }
 
@@ -1140,15 +1140,18 @@ void LAMP::demoTimer(SCHEDULER action, byte tmout){
   switch (action)
   {
   case SCHEDULER::T_DISABLE :
-    _demoTicker.disable();
+    demoTask.disable();
     break;
   case SCHEDULER::T_ENABLE :
-    _demoTicker.setInterval(tmout * TASK_SECOND);
-    _demoTicker.enableIfNot();
+    demoTask.setInterval(tmout * TASK_SECOND);
+    demoTask.enableIfNot();
     break;
   case SCHEDULER::T_RESET :
-    if (isAlarm()) stopAlarm(); // тут же сбросим и будильник
-      _demoTicker.restart();
+    if (isAlarm())
+      stopAlarm(); // тут же сбросим и будильник
+    if (mode==MODE_DEMO)  
+      //demoTask.restart();
+      demoTask.restartDelayed(tmout * TASK_SECOND);
     break;
   default:
     return;
@@ -1164,15 +1167,15 @@ void LAMP::effectsTimer(SCHEDULER action) {
   switch (action)
   {
   case SCHEDULER::T_DISABLE :
-    _effectsTicker.disable();
+    effectsTask.disable();
     break;
   case SCHEDULER::T_ENABLE :
-    _effectsTicker.set(EFFECTS_RUN_TIMER, TASK_ONCE, [this](){effectsTick();});
-    _effectsTicker.restartDelayed();
+    effectsTask.set(EFFECTS_RUN_TIMER, TASK_ONCE, [this](){effectsTick();});
+    effectsTask.restartDelayed();
     break;
   case SCHEDULER::T_RESET :
-    if (_effectsTicker.isEnabled() )
-      _effectsTicker.restartDelayed();
+    if (effectsTask.isEnabled() )
+      effectsTask.restartDelayed();
     break;
   default:
     return;
@@ -1264,13 +1267,13 @@ void LAMP::showWarning2(
     warn_duration = duration;
     warn_blinkHalfPeriod = blinkHalfPeriod;
 
-  if(forcerestart && _warningTicker){
-    _warningTicker->setInterval(blinkHalfPeriod);
-    _warningTicker->setIterations(duration/blinkHalfPeriod);     // вероятна ошибка округления нечетного числа периодов, если критично нужно будет исправить
+  if(forcerestart && warningTask){
+    warningTask->setInterval(blinkHalfPeriod);
+    warningTask->setIterations(duration/blinkHalfPeriod);     // вероятна ошибка округления нечетного числа периодов, если критично нужно будет исправить
   } else {
     // динамический тикер переключает флаг lampState.isWarning каждые blinkHalfPeriod мс в течение duration мс, по завершении утилизирует сам себя
-    _warningTicker = new Task( blinkHalfPeriod, duration/blinkHalfPeriod, [this](){ lampState.isWarning=!lampState.isWarning; }, &ts, false, nullptr, [this](){lampState.isWarning = false; embui.taskRecycle(_warningTicker); _warningTicker = nullptr;} );
-    _warningTicker->enableDelayed();
+    warningTask = new Task( blinkHalfPeriod, duration/blinkHalfPeriod, [this](){ lampState.isWarning=!lampState.isWarning; }, &ts, false, nullptr, [this](){lampState.isWarning = false; embui.taskRecycle(warningTask); warningTask = nullptr;} );
+    warningTask->enableDelayed();
   }
 
 }

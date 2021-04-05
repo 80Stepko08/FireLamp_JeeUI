@@ -52,10 +52,10 @@ JeeUI2 lib used under MIT License Copyright (c) 2019 Marsel Akhkamov
 #endif
 
 // планировщик заполнения списка
-Task optionsTicker(5 * TASK_SECOND, TASK_ONCE, delayedcall_show_effects_config, &ts, false );
+Task optionsTicker(5 * TASK_SECOND, TASK_ONCE, delayedcall_show_effects, &ts, false );
 Task ctrlsTicker;            // планировщик контролов
 
-static EffectListElem *confEff = nullptr;
+static EffectListElem *confEff = nullptr; // эффект, который сейчас конфигурируется на странице "Управление списком эффектов"
 
 bool check_recovery_state(bool isSet){
     bool state = false; //return state;
@@ -228,31 +228,30 @@ void show_effects_config_param(Interface *interf, JsonObject *data){
     interf->json_frame_flush();
 }
 
-void delayedcall_effects_main();
-
 /**
  * обработчик установок эффекта
  */
 void set_effects_config_param(Interface *interf, JsonObject *data){
     if (!confEff || !data) return;
     optionsTicker.disable();
+    EffectListElem *effect = confEff;
     
     SETPARAM(FPSTR(TCONST_0050), myLamp.effects.setEffSortType((*data)[FPSTR(TCONST_0050)].as<SORT_TYPE>()));
     
     String act = (*data)[FPSTR(TCONST_0005)];
     if (act == FPSTR(TCONST_0009)) {
-        myLamp.effects.copyEffect(confEff); // копируем текущий
+        myLamp.effects.copyEffect(effect); // копируем текущий
     //} else if (act == FPSTR(TCONST_000A)) {
     } else if (act == FPSTR(TCONST_00B0) || act == FPSTR(TCONST_00B1)) {
-        uint16_t tmpEffnb = confEff->eff_nb;
+        uint16_t tmpEffnb = effect->eff_nb;
         bool isCfgRemove = (act == FPSTR(TCONST_00B1));
         LOG(printf_P,PSTR("confEff->eff_nb=%d\n"), tmpEffnb);
         if(tmpEffnb==myLamp.effects.getCurrent()){
             myLamp.effects.directMoveBy(EFF_ENUM::EFF_NONE);
-            myLamp.effects.deleteEffect(confEff, isCfgRemove); // удаляем текущий
+            myLamp.effects.deleteEffect(effect, isCfgRemove); // удаляем текущий
             remote_action(RA_EFF_NEXT, NULL);
         } else {
-            myLamp.effects.deleteEffect(confEff, isCfgRemove); // удаляем текущий
+            myLamp.effects.deleteEffect(effect, isCfgRemove); // удаляем текущий
         }
         String tmpStr=F("- ");
         tmpStr+=String(tmpEffnb);
@@ -263,7 +262,8 @@ void set_effects_config_param(Interface *interf, JsonObject *data){
                 INDEX_BUILD_DELAY * TASK_SECOND,
                 TASK_ONCE, [](){
                                    myLamp.effects.makeIndexFileFromFS(); // создаем индекс по файлам ФС и на выход
-                                   delayedcall_effects_main();
+                                   if (!optionsTicker.isEnabled())
+                                        optionsTicker.restartDelayed();
                                    TASK_RECYCLE; },
                 &ts, false);
             _t->enableDelayed();
@@ -272,7 +272,8 @@ void set_effects_config_param(Interface *interf, JsonObject *data){
                 INDEX_BUILD_DELAY * TASK_SECOND,
                 TASK_ONCE, [](){
                                     myLamp.effects.makeIndexFileFromList(); // создаем индекс по текущему списку и на выход
-                                    delayedcall_effects_main();
+                                    if (!optionsTicker.isEnabled())
+                                        optionsTicker.restartDelayed();
                                     TASK_RECYCLE; },
                 &ts, false);
             _t->enableDelayed();
@@ -284,36 +285,37 @@ void set_effects_config_param(Interface *interf, JsonObject *data){
             INDEX_BUILD_DELAY * TASK_SECOND,
             TASK_ONCE, [](){
                                 myLamp.effects.makeIndexFileFromFS(); // создаем индекс по файлам ФС и на выход
-                                delayedcall_effects_main();
+                                if (!optionsTicker.isEnabled())
+                                    optionsTicker.restartDelayed();
                                 TASK_RECYCLE; },
             &ts, false);
         _t->enableDelayed();
         section_main_frame(interf, data);
         return;
     } else if (act == FPSTR(TCONST_0093)) {
-        LOG(printf_P,PSTR("confEff->eff_nb=%d\n"), confEff->eff_nb);
-        if(confEff->eff_nb==myLamp.effects.getCurrent()){
+        LOG(printf_P,PSTR("confEff->eff_nb=%d\n"), effect->eff_nb);
+        if(effect->eff_nb==myLamp.effects.getCurrent()){
             myLamp.effects.directMoveBy(EFF_ENUM::EFF_NONE);
-            myLamp.effects.removeConfig(confEff->eff_nb);
+            myLamp.effects.removeConfig(effect->eff_nb);
             remote_action(RA_EFF_NEXT, NULL);
         } else {
-            myLamp.effects.removeConfig(confEff->eff_nb);
+            myLamp.effects.removeConfig(effect->eff_nb);
         }
         String tmpStr=F("- ");
-        tmpStr+=confEff->eff_nb;
+        tmpStr+=effect->eff_nb;
         myLamp.sendString(tmpStr.c_str(), CRGB::Red);
         //confEff = myLamp.effects.getEffect(EFF_ENUM::EFF_NONE);
         section_main_frame(interf, data);
         return;
     }
     else {
-        confEff->canBeSelected((*data)[FPSTR(TCONST_0006)] == "1");
-        confEff->isFavorite((*data)[FPSTR(TCONST_0007)] == "1");
-        myLamp.effects.setSoundfile((*data)[FPSTR(TCONST_00AB)], confEff);
+        effect->canBeSelected((*data)[FPSTR(TCONST_0006)] == "1");
+        effect->isFavorite((*data)[FPSTR(TCONST_0007)] == "1");
+        myLamp.effects.setSoundfile((*data)[FPSTR(TCONST_00AB)], effect);
 #ifdef CASHED_EFFECTS_NAMES
-        confEff->setName((*data)[FPSTR(TCONST_0092)]);
+        effect->setName((*data)[FPSTR(TCONST_0092)]);
 #endif
-        myLamp.effects.setEffectName((*data)[FPSTR(TCONST_0092)], confEff);
+        myLamp.effects.setEffectName((*data)[FPSTR(TCONST_0092)], effect);
     }
 
     resetAutoTimers();
@@ -385,19 +387,18 @@ void block_effects_config(Interface *interf, JsonObject *data, bool fast=true){
 }
 
 // Построение выпадающего списка эффектов для вебморды
-void delayedcall_show_effects_config(){
+void delayedcall_show_effects(){
 
     LOG(println, F("=== GENERATE EffLIst for GUI===="));
-    if (!confEff)   // нет значения - выметаемся
-        return;
-
+    uint16_t effnb = confEff?(int)confEff->eff_nb:myLamp.effects.getSelected(); // если confEff не NULL, то мы в конфирурировании, иначе в основном режиме
+    
     Interface *interf = embui.ws.count()? new Interface(&embui, &embui.ws, 3000) : nullptr;
     if (!interf) return;
     interf->json_frame_interface();
     interf->json_section_content();
 
 
-    interf->select(FPSTR(TCONST_0010), String((int)confEff->eff_nb), String(FPSTR(TINTF_00A)), true, true); // не выводить метку
+    interf->select(confEff?FPSTR(TCONST_0010):FPSTR(TCONST_0016), String(effnb), String(FPSTR(TINTF_00A)), true, true); // не выводить метку
     EffectListElem *eff = nullptr;
     String effname((char *)0);
     MIC_SYMB;
@@ -685,48 +686,12 @@ void show_main_flags(Interface *interf, JsonObject *data){
     interf->json_frame_flush();
 }
 
-void delayedcall_effects_main(){
-    Interface *interf = embui.ws.count()? new Interface(&embui, &embui.ws, 3000) : nullptr;
-    if (!interf) return;
-    interf->json_frame_interface();
-    interf->json_section_content();
-    interf->select(FPSTR(TCONST_0016), String(myLamp.effects.getSelected()), String(FPSTR(TINTF_00A)), true, true); // не выводить метку
-    EffectListElem *eff = nullptr;
-    String effname((char *)0);
-    bool isEmptyHidden=false;
-    MIC_SYMB;
-    bool numList = myLamp.getLampSettings().numInList;
-    while ((eff = myLamp.effects.getNextEffect(eff)) != nullptr) {
-        if (eff->canBeSelected()) {
-            myLamp.effects.loadeffname(effname, eff->eff_nb);
-            interf->option(String(eff->eff_nb),
-                EFF_NUMBER + 
-                String(effname) + 
-                MIC_SYMBOL
-            );
-            #ifdef ESP8266
-            ESP.wdtFeed();
-            #elif defined ESP32
-            delay(1);
-            #endif
-        } else if(!eff->eff_nb){
-            isEmptyHidden=true;
-        }
-    }
-    if(isEmptyHidden)
-        interf->option(String(0),"");
-    interf->json_section_end();
-    interf->json_section_end();
-    interf->json_frame_flush();
-    delete interf;
-    optionsTicker.disable();
-}
-
-// Страница "Управление эффектами"
+// Страница "Эффекты" (начальная страница)
 void block_effects_main(Interface *interf, JsonObject *data, bool fast=true){
 #ifndef DELAYED_EFFECTS
     fast=false;
 #endif
+    confEff = NULL; // т.к. не в конфигурировании, то сбросить данное значение
 
     if (!interf) return;
     interf->json_section_main(FPSTR(TCONST_0000), FPSTR(TINTF_000));
